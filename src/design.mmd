@@ -1,0 +1,23 @@
+flowchart TB
+    A1((Kafka\nTransactions & FraudSignals)) -->|Spark Reads| SIndexJob[Streaming Index Job]
+    SIndexJob -->|Writes| SIndex[S3: Streaming Index]
+
+    B1((S3: Historical\nTransactions,\nPolicies,\nFraudSignals)) -->|Spark Reads| BIndexJob[Batch Index Job]
+    BIndexJob -->|Writes| BIndex[S3: Batch Index]
+
+    D1((S3: Dimension\nTables\n(User,\nMerchant,\nRiskRule,...))) -- Broadcast Joins --> SIndexJob
+    D1 -- Broadcast Joins --> BIndexJob
+
+    SIndex --> FinalJob[Final Aggregate Job]
+    BIndex --> FinalJob
+    FinalJob --> FIndex[S3: Final Index]
+
+    style A1 fill:#fcf,stroke:#333,stroke-width:1px
+    style B1 fill:#fcf,stroke:#333,stroke-width:1px
+    style D1 fill:#ff9,stroke:#333,stroke-width:1px
+    style SIndexJob fill:#ccf,stroke:#333,stroke-width:1px
+    style BIndexJob fill:#ccf,stroke:#333,stroke-width:1px
+    style FinalJob fill:#cfc,stroke:#333,stroke-width:1px
+    style SIndex fill:#eee,stroke:#333,stroke-width:1px
+    style BIndex fill:#eee,stroke:#333,stroke-width:1px
+    style FIndex fill:#eee,stroke:#333,stroke-width:1px

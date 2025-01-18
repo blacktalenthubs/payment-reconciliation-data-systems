@@ -1,0 +1,37 @@
+# file: streaming_deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: streaming-index-deployment
+  labels:
+    app: streaming-index
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: streaming-index
+  template:
+    metadata:
+      labels:
+        app: streaming-index
+    spec:
+      containers:
+      - name: streaming-index
+        image: "689688817484.dkr.ecr.us-east-1.amazonaws.com/batch_build:latest"
+        command: ["/opt/bitnami/spark/bin/spark-submit","/opt/bitnami/spark/streaming_index.py"]
+        env:
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: "b-1.mymskcluster.amazonaws.com:9092,b-2.mymskcluster.amazonaws.com:9092"
+        - name: KAFKA_TOPIC
+          value: "fraud_signals_topic"
+        - name: S3_OUTPUT
+          value: "s3a://my-stream-output/streaming_index"
+        ports:
+        - containerPort: 4040
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1"

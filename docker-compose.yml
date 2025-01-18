@@ -1,0 +1,137 @@
+version: '3.7'
+
+services:
+  zookeeper:
+    image: bitnami/zookeeper:3.8
+    container_name: local-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ALLOW_ANONYMOUS_LOGIN: "yes"
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: bitnami/kafka:3.4
+    container_name: local-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    ports:
+      - "9092:9092"
+
+  minio:
+    image: minio/minio:latest
+    container_name: local-minio
+    environment:
+      MINIO_ROOT_USER: "testuser"
+      MINIO_ROOT_PASSWORD: "testpass"
+    command: server /data
+    ports:
+      - "9000:9000"
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://minio:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    volumes:
+      - minio_data:/data
+
+  # Spark Master - change host port 8080 to something else to avoid conflict
+  spark-master:
+    image: bitnami/spark:3.3.1
+    container_name: local-spark-master
+    environment:
+      SPARK_MODE: master
+    command: ["/opt/bitnami/scripts/spark/entrypoint.sh"]
+    ports:
+      - "7077:7077"   # Spark master
+      - "8082:8080"   # changed from 8080:8080 to 8082:8080 to avoid collision
+    depends_on:
+      - kafka
+    # On ARM-based Macs (M1/M2), you may need "platform: linux/amd64" if the image doesn't have an ARM build
+    # platform: linux/amd64
+
+  spark-worker:
+    image: bitnami/spark:3.3.1
+    container_name: local-spark-worker
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+    command: ["/opt/bitnami/scripts/spark/entrypoint.sh"]
+    depends_on:
+      spark-master:
+        condition: service_started
+    # platform: linux/amd64
+
+  postgres:
+    image: postgres:14
+    container_name: local-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  airflow-init:
+    image: apache/airflow:2.6.3
+    container_name: local-airflow-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - bash
+      - -c
+      - |
+        airflow db init && \
+        airflow users create --username admin --password admin \
+          --firstname Airflow --lastname Admin --role Admin \
+          --email admin@example.com
+
+  # Webserver on port 8081 to avoid conflict with existing containers
+  airflow-webserver:
+    image: apache/airflow:2.6.3
+    container_name: local-airflow-webserver
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+    command: ["airflow", "webserver"]
+    volumes:
+      - ./src/orchestration/dags:/opt/airflow/dags
+
+  airflow-scheduler:
+    image: apache/airflow:2.6.3
+    container_name: local-airflow-scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    command: ["airflow", "scheduler"]
+    volumes:
+      - ./src/orchestration/dags:/opt/airflow/dags
+
+volumes:
+  minio_data:

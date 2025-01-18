@@ -1,0 +1,56 @@
+# file: streaming_deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: streaming-index-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: streaming-index
+  template:
+    metadata:
+      labels:
+        app: streaming-index
+    spec:
+      containers:
+      - name: streaming-index
+        image: "<account_id>.dkr.ecr.us-east-1.amazonaws.com/my-namespace-streaming:latest"
+        env:
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: "b-1.my-msk-cluster...,b-2.my-msk-cluster..."  # from MSK
+        - name: KAFKA_TOPIC
+          value: "fraud_signals_topic"
+        - name: S3_OUTPUT
+          value: "s3a://my-stream-output/streaming_index"
+        # ...
+        ports:
+        - containerPort: 4040  # Spark UI or whichever
+
+---
+# file: batch_deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: batch-index-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: batch-index
+  template:
+    metadata:
+      labels:
+        app: batch-index
+    spec:
+      containers:
+      - name: batch-index
+        image: "<account_id>.dkr.ecr.us-east-1.amazonaws.com/my-namespace-batch:latest"
+        env:
+        - name: S3_INPUT
+          value: "s3a://my-batch-input/transactions"
+        - name: S3_OUTPUT
+          value: "s3a://my-batch-output/final_index"
+        # ...
+        ports:
+        - containerPort: 4040
