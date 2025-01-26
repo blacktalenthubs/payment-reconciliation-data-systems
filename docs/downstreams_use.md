@@ -1,4 +1,3 @@
-Below is a **downstream consumer system** that leverages the **streaming or batch outputs** we’ve created. We’ll assume our final Parquet outputs (e.g., the “Aggregate Index” or “Streaming Index”) reside in **S3** under some well-known paths, and we have various **downstream** use cases (dashboards, analytics queries, additional machine-learning pipelines, etc.). This example focuses on how a typical system might load these outputs into:
 
 1. A **BI Dashboard**: For business and risk analysts.  
 2. A **Lightweight Aggregation Service**: For user-facing or operational endpoints.  

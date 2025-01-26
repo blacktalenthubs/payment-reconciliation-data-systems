@@ -1,7 +1,5 @@
-Below is a simple conceptual explanation to clarify **data skew** vs. **data shuffle** in a Spark (or distributed) environment, using a small merchant/transaction example.
 
 ---
-
 ## Data Shuffle
 
 1. **Definition**:  
