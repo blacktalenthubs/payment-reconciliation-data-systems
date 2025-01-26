@@ -321,7 +321,7 @@ On success, the new image is tagged and pushed to **ECR**.
 - **Auto-scaling** triggers based on CPU/memory usage in EKS (via Kubernetes Horizontal Pod Autoscaler).
 
 ## **Batch Orchestration** (Airflow)  
-- **DAG** example:
+- **DAG** :
   1. **Check aggregator data** in S3.  
   2. **Start EMR Cluster** (if needed) or run step on existing cluster.  
   3. **Run Spark job** to unify partial indexes, aggregator statements, produce **Batch Index**.  
@@ -329,11 +329,4 @@ On success, the new image is tagged and pushed to **ECR**.
   5. **Publish** or notify downstream systems once the final dataset is ready.  
 
 ---
-
-### **Next Steps**:
-1. **Finalize Schemas & UDFs** with business owners and compliance teams.  
-2. **Implement Terraform** modules to spin up MSK, EKS, and EMR.  
-3. **Containerize** Spark streaming application (Docker + ECR).  
-4. **Develop** Airflow DAGs for daily batch reconciliation pipeline.  
-5. **Configure** monitoring and alerting (CloudWatch, Datadog) with clear SLAs.
-
+![Recon Design.drawio.svg](Recon%20Design.drawio.svg)
