@@ -1,4 +1,3 @@
-Below is an **end-to-end plan** for deploying the data pipeline to AWS, integrating with **Athena**, **Airflow** (for orchestration), and **Docker** (for containerizing code). This plan demonstrates how to take the existing Spark-based streaming/batch pipelines, run them in a production-like environment, and expose the curated data to business stakeholders via Athena queries.
 
 ---
 
@@ -229,14 +228,8 @@ all without provisioning a database server.
 
 ---
 
-# Conclusion
-
-With this **deployment plan**:
-
 - You **Dockerize** the code to maintain consistent environments.  
 - You **orchestrate** the pipelines with Airflow tasks (for batch).  
 - You **expose** curated data in S3 to **Athena**, letting business users run SQL analytics on the final indexes.  
 - You can **choose** EMR or EKS for Spark runs, depending on your org’s preference.  
 - **Security** is handled via IAM, restricted S3 buckets, and optional encryption.
-
-This approach provides a **comprehensive** solution for teaching advanced data engineering students how to go from a local Spark pipeline to a full-blown AWS-based production environment, including best practices in containerization, orchestration, data lake queries, and cloud security.

@@ -1,72 +1,264 @@
 # **Payment Reconciliation Index System**
 
+## Requirements & Scope
+
+**Business Functions (Functional Requirements)**  
+**Real-Time Fraud Visibility**: The system provides an immediate index of suspicious or high-risk transactions that can be consumed by fraud analysts or automated alert systems.  
+**Transactional Reconciliation**: Each day, finance teams leverage a consolidated “reconciliation index” to match internal transactions with bank or aggregator statements.  
+**Merchant Performance Dashboards**: Aggregated data for each merchant’s volume, chargebacks, or refunds is made available for partnerships and sales to track performance and highlight anomalies.  
+**User Spend Profiling**: Summaries of user spending patterns or repeated declines feed marketing or risk teams, enabling targeted promotions or flagging suspicious behavior.  
+**Compliance & Auditing**: A compliance index consolidates required fields for KYC/AML checks and external audits.  
+**Settlement & Payout Timelines**: The system produces a schedule index that treasury can use to see upcoming disbursements, ensuring timely payouts.  
+**Operational Monitoring**: Operational teams view real-time throughput, latencies, or error rates from an operations index to maintain healthy service levels.
+
+**(BR1) Real-Time Payment Ingestion**  
+   - The system must capture live transactions from payment gateways (or POS systems) in sub-second latency.  
+   - It should enrich each transaction with immediate fraud signals (e.g., rule-based flags, ML-derived risk scores).  
+**(BR2) Batch Historical Processing**  
+   - The system must support daily or periodic batch ingestion of large historical payment datasets.  
+   - It should apply deduplication, transformations, and integrate policy control data that updates infrequently.  
+
+**(BR3) Fraud Signal Integration**  
+   - The system must integrate ML-generated fraud signals (e.g., suspicious activity scores) and incorporate them into both real-time and batch pipelines.  
+   - It should provide a feedback loop for ML models, so new data can be used to retrain or refine fraud detection algorithms.  
+
+**(BR4) Indexed Output for Risk & Compliance**  
+   - The system must output an index (or set of indexed tables) that can be queried in near real-time by risk teams.  
+   - These indexes should store transaction details, associated risk scores, and relevant policy flags.  
+
+**(BR5) Mixed Deployment Pattern**  
+   - The system must run two distinct deployment flows: one for streaming ingestion (and continuous updates) and one for batch ingestion (and scheduled updates).  
+   - Both outputs (Stream Index + Batch Index) must be merged to produce a single “Aggregate Index” accessible to downstreams.  
+
+**(BR6) Downstream Data Delivery & Consumption**  
+   - The system must publish the enriched data to:  
+     - Payment gateway services (e.g., for final authorization checks).  
+     - ML pipelines (for further modeling and scoring).  
+     - BI/analytics platforms (for dashboards, compliance reporting).  
+
+**(BR7) Monitoring & Alerting**  
+   - The system must include real-time monitoring of ingestion, processing latencies, error rates, and fraud score anomalies.  
+   - Critical alerts (e.g., pipeline downtime, abnormal spikes in fraud scores) must notify on-call teams immediately.
+
 
 ---
 
-## **2. Detailed Design: Streaming & Batch**
+### Non-Functional Requirements
 
-### **2.1 Data Modeling**
+**Performance**  
+  - The streaming pipeline should process and index transactions with sub-second latency for time-sensitive decisions.  
+  - The batch pipeline must handle large volumes (millions of records) within scheduled SLAs.
+
+**Scalability**  
+  - Must auto-scale to handle variable transaction loads (e.g., seasonal spikes).  
+  - Should accommodate future growth in data volumes (transaction expansions, new fraud signals).
+
+**Reliability & Availability**  
+  - Must provide high uptime for critical payment workflows.  
+  - Implement fault tolerance and recovery strategies (e.g., checkpointing in streaming, retry logic for batch).
+
+**Security & Compliance**  
+  - Data encryption at rest and in transit for all sensitive payment and personal information.  
+  - Strict role-based access control to comply with PCI-DSS and other regulatory standards.
+
+**Data Quality & Governance**  
+  - Enforce schema validation and data integrity checks for both streaming and batch inputs.  
+  - Maintain an audit trail of data transformations and changes to fraud scores.
+
+**Maintainability**  
+  - Clear separation of streaming vs. batch code, with reusable libraries for data transformations.  
+  - Automated CI/CD pipelines for frequent updates and safe rollouts.
+
+**Monitoring & Observability**  
+  - Centralized logging, metrics, and dashboards to track streaming throughput, batch job times, and error counts.  
+  - Real-time alerts on SLA breaches or unusual fraud activity.
+**Infrastructure & High-Level Design**  
+ **AWS MSK (Kafka)**: Accepts real-time fraud/transaction events.  
+ **EKS**: Runs Spark Streaming as a Kubernetes Deployment. Consumes from MSK, writes partial indexes to S3.  
+ **EMR**: Runs batch Spark jobs that unify raw logs + partial indexes → final reconciliation or merchant indexes.  
+ **S3**: Central data lake for partial indexes (real-time) and final indexes (batch).  
+---
+## **Detailed Design: Streaming & Batch**
+
+### **Data Modeling**
 
 - **Transactions**: Core fields (transaction_id, user_id, merchant_id, amount, currency, timestamp, status).  
 - **Fraud Signals**: For suspicious events (fraud_id, transaction_id, fraud_score, reason_code).  
 - **Merchant Data**: (merchant_id, merchant_name, risk_level).  
 - **Indexes**: Reconciled or aggregated data sets derived from these raw sources.
 
-**Key**: Each index is a specialized **view** (or aggregated table) that downstream teams use. Some are partial (real-time), some are final (batch).
 
-### **2.2 Streams Pipeline**
+### **Streams Pipeline**
 
-1. **Input**: MSK (Kafka) receiving “fraud_signals_topic” or real-time transaction events.  
-2. **Spark Streaming** on EKS:
+**Input**: MSK (Kafka) receiving “fraud_signals_topic” real-time transaction events.
+**Spark Streaming** on EKS:
    - **Read** from MSK in micro-batches or continuous mode.  
    - **Optionally join** with dimension data (merchant, user) in S3 or broadcast.  
    - **Produce** partial or real-time indexes → S3 (e.g. “fraud index”, “ops index”).  
    - **Low-latency** (~seconds) ensures BF1 & BF6 are always updated.
 
-### **2.3 Batch Pipeline**
+### **Batch Pipeline**
 
-1. **Input**: S3 (transactions, partial indexes from streaming).  
-2. **EMR** (Spark batch):
+**Input**: S3 (transactions, partial indexes from streaming).  
+**EMR** (Spark batch):
    - **Nightly** or scheduled to unify transaction logs, fraud signals, settlement data.  
    - **Generate** final “reconciliation index” or aggregated “merchant index.”  
    - **Write** these final indexes to S3 for consumption by BF2, BF3, BF5, BF7.  
-3. This ensures thorough data coverage and advanced computation requiring large merges or groupBy over extended historical data.
 
 ---
 
-## **3. Infrastructure Requirements & Architecture**
+## **Infrastructure Requirements & Architecture**
 
-### **3.1 Infrastructure Components**
+### **Infrastructure Components**
 
-1. **AWS VPC & Subnets**  
+**AWS VPC & Subnets**  
    - **Private** subnets for MSK brokers and EKS worker nodes.  
    - **Public** subnets for EMR master node if needed.  
    - NAT gateway for outbound internet if required.
 
-2. **MSK (Kafka)**  
+**MSK (Kafka)**  
    - 2–3 broker nodes in private subnets.  
    - “fraud_signals_topic” auto-created or manually created using a K8s job or ephemeral EC2.
 
-3. **EKS Cluster**  
+**EKS Cluster**  
    - 1 node group (t3.medium or scale up if needed).  
    - Spark-based streaming code runs as a K8s deployment, container images in ECR.  
    - Low-latency consumption from MSK.
 
-4. **EMR**  
+**EMR**  
    - Master + Core nodes.  
    - Steps triggered nightly or on-demand, reading from S3, writing final indexes to S3.  
    - IAM roles for S3 read/write, logs in S3.
 
-5. **S3**  
+**S3**  
    - “raw transactions”, “fraud signals”, partial “indexes” from streaming, final “indexes” from batch.  
    - Possibly partitioned by date, merchant, etc.
 
-6. **ECR**  
+**ECR**  
    - Stores Docker images: one for streaming (PySpark + Kafka connector), one for batch (PySpark).  
 
-**All** orchestrated via **Terraform** for consistent spin-up.
+**All** orchestrated via **Terraform** for consistent spin-up and shutdown.
 
-### **3.2 Architecture Diagram**
+### **Architecture Diagram**
+
+
+## **Architectural Design for Payment Recon indexing systems** 
+
+```
+
+
+Data Sources:
+Payment Systems
+    Transactions
+    Users
+    Merchants
+    Locations
+    
+Internally Generate Data:
+    Policies
+    
+    
+ML Produced Data:
+    ML teams consumes payment systems data and produced an inference service fraud detections and classifications 
+    
+    
+    
+Data Systems being built:
+
+    Consuems all above data and produced an Indexing systems  
+    
+    
+                                            +-------------------------------------------+
+                                            |    Data Producers (APIs, Partner APIs)    |
+                                            |  (Flask endpoints, external systems)       |
+                                            +-------------------------+------------------+
+                              |  
+                                                                      v
+                                           +---------------------------------------------------+
+                                           |   Ingestion Scripts (Python, etc.)                |
+                                           |   - batch: ingest_to_s3.py                        |
+                                           |   - stream: ingest_to_kafka.py                    |
+                                           +----------------------------+-----------------------+
+                                                                        | (2) writes files/JSON
+                                                                        |     or Parquet to S3
+                                                                        v
+                             +----------------------------------------------------+
+                             |                 S3 (Raw Data Bucket)               |
+                             |     (historical transactions, dimension tables)    |
+                             +----------------------------------------------------+
+                                                                        ^
+                                                                        | (3) publishes messages
+                                                                        |     to Kafka topics
+                             +------------------------------------------+------------------------+
+                             |  Kafka / MSK  (streaming input for Spark)              |
+                             |  - transactions_topic, fraud_signals_topic, etc.       |
+                             +------------------------------------------+------------------------+
+
+                                                
+                           +--------------------------------------------------------------+
+                           |     Spark Streaming Pipeline (streaming_index_advanced.py)   |
+                           |     - reads from Kafka (transactions & fraud)               |
+                           |     - merges dimension data (User, Merchant, etc.)          |
+                           |     - handles dedup, watermark, salting for skew            |
+                           |     - writes "Streaming Index" to S3                        |
+                           +-----------------------------^--------------------------------+
+                                                         | (4) micro-batch Parquet output
+                                                         v
+          +------------------------------------------------------------------------------------+
+          |                 S3 (Processed Bucket)                                              |
+          |     "streaming_index/"  (continuously updated in micro-batches)                    |
+          +------------------------------------------------------------------------------------+
+                                                         ^
+                                                         | (5) overwrites/append from next job
+                                                         |
+                           +-------------------------------------------------+-----------------+
+                           |   Spark Batch Pipeline (batch_index_refactored.py)               |
+                           |   - reads raw historical data (transactions, fraud signals) from |
+                           |     S3 plus dimension tables                                     |
+                           |   - merges, cleans, transforms                                   |
+                           |   - writes "Batch Index" in Parquet                              |
+                           +-------------------------------------------------+-----------------+
+                                                         |
+                                                         v
+          +------------------------------------------------------------------------------------+
+          |                S3 (Processed Bucket)                                               |
+          |     "batch_index/" (partitioned, compressed Parquet)                               |
+          +------------------------------------------------------------------------------------+
+                                                         ^
+                                                         | (6) reads both streaming & batch indexes
+                                                         v
+                           +----------------------------------------------------------+
+                           |       Final Aggregator (final_aggregate.py)             |
+                           |   - merges "Streaming Index" & "Batch Index"            |
+                           |   - deduplicates, picks latest transaction states        |
+                           |   - writes "Final Aggregate" in Parquet                 |
+                           +---------------------------+------------------------------+
+                                                       | (7) final snapshot
+                                                       v
+          +------------------------------------------------------------------------------------+
+          |                      S3 (Processed Bucket)                                         |
+          |   "final_aggregate/"  (comprehensive, up-to-date dataset)                         |
+          +------------------------------------------------------------------------------------+
+                                                       ^
+                                                       |
+         +---------------------------------------------------------------------------------------------------+
+         |                                         Downstream Consumers                                     |
+         +---------------------------------------------------------------------------------------------------+
+         | (8) Athena / BI Tools:                                                                             |
+         |     - We define external tables on "final_aggregate/"                                             |
+         |     - Analysts query with SQL via Athena or build dashboards in Tableau / QuickSight / etc.       |
+         |                                                                                                   |
+         | (9) Aggregation Service:                                                                           |
+         |     - Periodic job reading from "streaming_index/" or "final_aggregate/"                          |
+         |     - Summarizes data (e.g. merchant totals), pushes to Redis / DynamoDB                          |
+         |     - Powers real-time dashboards for ops or risk teams                                          |
+         |                                                                                                   |
+         | (10) ML Pipeline (offline training):                                                              |
+         |     - ml_training_pipeline.py loads "final_aggregate/"                                            |
+         |     - creates advanced features, trains new fraud detection model                                 |
+         |     - saves model artifacts to S3 or ML registry                                                  |
+         +---------------------------------------------------------------------------------------------------+
+```
 
 ```
                              +-----------------------------+
@@ -94,200 +286,22 @@
         +----------------------------------------+
 ```
 
-**Explanation**:  
 - Real-time pipeline in EKS keeps partial indexes updated for immediate queries.  
 - Batch pipeline on EMR finalizes heavy merges, generating consolidated indexes for finance, fraud, compliance, etc.
 
-### **3.3 Deployment Steps**
+### **Deployment Steps**
 
-1. **Terraform** apply:
+**Terraform** apply:
    - VPC, subnets, MSK, EKS, EMR, S3, ECR.  
-2. **Build** Docker images (streaming & batch) → push to ECR.  
-3. **Create** K8s deployment for streaming job referencing `fraud_signals_topic`.  
-4. **Upload** batch script to S3 → run EMR step nightly or on-demand.  
-5. **Check** logs in CloudWatch or S3 for each job.
-
----
-
-**Business Functions (Functional Requirements)**  
-• **Real-Time Fraud Visibility**: The system provides an immediate index of suspicious or high-risk transactions that can be consumed by fraud analysts or automated alert systems.  
-• **Transactional Reconciliation**: Each day, finance teams leverage a consolidated “reconciliation index” to match internal transactions with bank or aggregator statements.  
-• **Merchant Performance Dashboards**: Aggregated data for each merchant’s volume, chargebacks, or refunds is made available for partnerships and sales to track performance and highlight anomalies.  
-• **User Spend Profiling**: Summaries of user spending patterns or repeated declines feed marketing or risk teams, enabling targeted promotions or flagging suspicious behavior.  
-• **Compliance & Auditing**: A compliance index consolidates required fields for KYC/AML checks and external audits.  
-• **Settlement & Payout Timelines**: The system produces a schedule index that treasury can use to see upcoming disbursements, ensuring timely payouts.  
-• **Operational Monitoring**: Operational teams view real-time throughput, latencies, or error rates from an operations index to maintain healthy service levels.
-
-**Non-Functional Expectations**  
-• **Scalability**: Must handle thousands of transactions per second in real-time while also processing large historical sets.  
-• **Low Latency**: Real-time indexes should be updated within seconds.  
-• **Reliability**: No data loss if a streaming job restarts. Batch runs must complete successfully or alert on failure.  
-• **Cost Efficiency**: Resources should autoscale where possible. Storage footprints minimized.  
-• **Security & Access Controls**: Only authorized roles can read/write specific indexes. Data encryption in transit (TLS) for MSK, SSE-KMS for S3.  
-• **Data Quality**: Must filter or quarantine malformed events; final indexes must be consistent.
-
-**Infrastructure & High-Level Design**  
-• **AWS MSK (Kafka)**: Accepts real-time fraud/transaction events.  
-• **EKS**: Runs Spark Streaming as a Kubernetes Deployment (or Spark Operator). Consumes from MSK, writes partial indexes to S3.  
-• **EMR**: Runs batch Spark jobs that unify raw logs + partial indexes → final reconciliation or merchant indexes.  
-• **S3**: Central data lake for partial indexes (real-time) and final indexes (batch).  
-
-```
-  Payment or Fraud Producers → MSK → EKS (Streaming) → S3 → EMR (Batch) → S3 (final)
-```
-
-**Data Skew**  
-- **Problem**: Some merchants or user IDs dominate the data, causing spark tasks to over-concentrate on a few partitions.  
-- **Code Snippet** (example in `batch_index.py`):
-  ```python
-  from pyspark.sql import functions as F
-
-  # Salting approach
-  df = df.withColumn("salt", F.expr("floor(rand() * 10)"))
-  df = df.repartition("merchant_id", "salt")  # Spreads skewed keys
-  aggregated = df.groupBy("merchant_id", "salt").agg(...)  # or further transformations
-  ```
-- **By introducing a `salt` column, heavily skewed keys are divided across multiple tasks, preventing straggler tasks.
-
-**Long-Running Queries**  
-- **Problem**: Certain groupBy or join operations run excessively long in EMR or the streaming job.  
-- **Code Snippet** (Spark config for batch):
-  ```python
-  # In main code or spark-submit params
-  spark.conf.set("spark.sql.shuffle.partitions", "200")  # reduce from a high default
-  spark.conf.set("spark.dynamicAllocation.enabled", "true")
-  spark.conf.set("spark.dynamicAllocation.maxExecutors", "50")
-  ```
-- **Dynamic allocation helps add executors if a query scales up. Adjust shuffle partitions to lower overhead on medium data volumes.
-
-**Watermarks & State Management in Streaming**  
-- **Problem**: Late-arriving events or indefinite state can cause memory bloat or incorrect real-time aggregates.  
-- **Code Snippet** (in `streaming_index.py`):
-  ```python
-  from pyspark.sql.window import Window
-
-  streaming_df = parsed_df \
-    .withWatermark("event_time", "2 hours") \
-    .groupBy(
-      F.window("event_time", "1 hour"),
-      "merchant_id"
-    ).agg(F.count("*").alias("count"))
-  ```
-- **A watermark discards data older than 2 hours, preventing unbounded state if events arrive extremely late. Spark discards states for older windows once the watermark moves.
-
-**Storage / Small Files**  
-- **Problem**: Continuous micro-batches can create many small Parquet files in S3, causing high overhead.  
-- **Code Snippet**:
-  ```python
-  # streaming_index.py
-  query = (df.writeStream
-    .format("parquet")
-    .option("path", "s3a://my-stream-output/")
-    .option("checkpointLocation", "s3a://my-checkpoints/")
-    .option("maxRecordsPerFile", 500000)  # limit # of records per output file
-    .start()
-  )
-  ```
-- **For a streaming sink, limiting records per file or using a daily compaction job merges small files into larger ones.
-
-**Compression & File Formats**  
-- **Problem**: CSV is large; default snappy parquet might or might not be best for repeated read patterns.  
-- **Code Snippet**:
-  ```python
-  spark.conf.set("spark.sql.parquet.compression.codec", "zstd")
-  df.write.mode("overwrite").parquet("s3a://some-output/")
-  ```
-- **Explanation**: ZSTD can be smaller than snappy with good speeds. Minimizes S3 costs while maintaining decent performance.
-
-**Checkpoints & Exactly-Once**  
-- **Problem**: If the streaming job restarts and the checkpoint is lost, double-reads can occur.  
-- **Code Snippet**:
-  ```python
-  query = df.writeStream
-    .format("parquet")
-    .option("checkpointLocation", "s3a://my-checkpoints/streamingJob/")
-    .outputMode("append")
-    .start()
-  ```
-- **A stable S3-based checkpoint directory ensures once the job restarts, it picks up the last processed offset exactly. This helps avoid duplicates.
-
-**Shuffle Overhead & Large Joins**  
-- **Problem**: The final batch index merges large transactions + dimension data, generating big shuffle stages.  
-- **Code Snippet**:
-  ```python
-  from pyspark.sql.functions import broadcast
-
-  final_df = transactions_df.join(
-      broadcast(merchant_dim_df),
-      "merchant_id",
-      "left"
-  )
-  ```
-- **By broadcasting smaller dimension tables, Spark avoids shuffling them across partitions.
-
-**Spark Config Tuning**  
-- **Problem**: OutOfMemory errors or slow tasks if defaults are used.  
-- **Code Snippet**:
-  ```python
-  spark.conf.set("spark.executor.memory", "4g")
-  spark.conf.set("spark.driver.memory", "2g")
-  spark.conf.set("spark.executor.cores", "2")
-  ```
-- **Setting more memory or cores helps heavy transformations. On EKS, also specify CPU/mem requests in the container spec to ensure proper scheduling.
-
-**Data Quality & Null Handling**  
-- **Problem**: Some transactions have missing user_id or merchant_id.  
-- **Code Snippet**:
-  ```python
-  valid = df.filter("user_id IS NOT NULL AND merchant_id IS NOT NULL")
-  invalid = df.filter("user_id IS NULL OR merchant_id IS NULL")
-
-  invalid.writeStream.format("parquet")...
-  ```
-- **We route invalid rows for quarantine or analysis, ensuring final indexes remain consistent.
-
-**Storage Lifecycle & Cleanup**  
-- **Problem**: Old partial indexes accumulate in S3, incurring cost.  
-- **Code**: Not in Spark but an AWS lifecycle or a separate housekeeping job:
-  ```hcl
-  resource "aws_s3_bucket_lifecycle_configuration" "cleanup" {
-    bucket = aws_s3_bucket.main.id
-    rule {
-      id     = "delete-old-indexes"
-      status = "Enabled"
-      expiration {
-        days = 30
-      }
-      prefix = "partial-indexes/"
-    }
-  }
-  ```
-- **After 30 days, partial indexes are deleted. Or we can transition them to Glacier.
-
-**Stateful Aggregations**  
-- **Problem**: Summaries by user for a sliding window can grow large.  
-- **Code Snippet** (approx):
-  ```python
-  streaming_df = streaming_df \
-    .groupBy("user_id") \
-    .agg(F.sum("amount").alias("total_amount")) \
-    .option("checkpointLocation", "s3a://my-checkpoints/statefulAgg/")
-```
-- **Explanation**: Ensure we have adequate memory or set time-based watermarks to drop old data from state.
-
-**Data Format**  
-- **Problem**: CSV is easier but large and lacks schema. Parquet or ORC is recommended.  
-- **Code**:
-  ```python
-  df.write.csv("s3a://my-output/csv/")  # old approach
-  # vs
-  df.write.parquet("s3a://my-output/parquet/")
-  ```
-- **We unify on Parquet with compression for smaller footprints and faster reads.
-
-**Orchestration**  
-- **Problem**: Manual triggers for batch can conflict with streaming.  
-- **Solution**: Introduce Airflow or Step Functions to schedule the “upload_and_run_emr_batch.sh” or to verify streaming job is healthy before triggering batch.
+**Build** Docker images (streaming & batch) → push to ECR.  
+**Create** K8s deployment for streaming job referencing `fraud_signals_topic`.  
+**Upload** batch script to S3 → run EMR step nightly or on-demand.  
+**Check** logs in CloudWatch or S3 for each job.(Monitoring and production support)
 
 
-Minicube to run Kubernetes locally 
+spark-submit \
+  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.3.0 \
+  streaming_pipeline.py \
+    --kafka_bootstrap_servers localhost:9092 \
+    --kafka_topic transactions_topic \
+    --output_path ./partial_streaming_index
